@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="Atlas Digital da Bacia Hidrográfica do Rio Mearim — Maranhão">
+  <meta name="theme-color" content="#143f2d">
+  <title>Atlas Digital — Bacia do Rio Mearim</title>
+  <link rel="stylesheet" href="css/style.css?v=1">
+</head>
+<body>
+<header class="topbar">
+  <button id="menuBtn" class="icon-btn map-only" type="button" aria-label="Abrir ou recolher painel de camadas">☰</button>
+  <div class="brand"><span class="kicker">DINÂMICA AMBIENTAL • MARANHÃO</span><h1>Bacia Hidrográfica do Rio Mearim</h1></div>
+  <nav class="main-nav" aria-label="Navegação principal">
+    <button class="nav-btn active" data-view="mapa" type="button"><span class="nav-icon">⌖</span><span class="nav-label">Mapa</span></button>
+    <button class="nav-btn" data-view="dados-orbitais" type="button"><span class="nav-icon">◉</span><span class="nav-label">Dados orbitais</span></button>
+    <button class="nav-btn" data-view="sobre" type="button"><span class="nav-icon">ⓘ</span><span class="nav-label">Sobre</span></button>
+  </nav>
+  <button id="homeBtn" class="icon-btn map-only" type="button" title="Voltar à bacia">⌂</button>
+</header>
+
+<section id="viewMapa" class="app-view active" data-view-panel="mapa">
+  <aside id="sidebar" class="sidebar" aria-label="Painel de camadas">
+    <div class="sidebar-scroll">
+      <section class="hero-card">
+        <span class="eyebrow">MARANHÃO • BRASIL</span>
+        <strong>100.204,0 km²</strong>
+        <span class="muted">Área informada no limite da bacia</span>
+        <div class="mini-stats">
+          <span><b>94</b> municípios interceptados</span>
+          <span><b>67</b> sedes municipais</span>
+          <span><b>14.899</b> trechos hidrográficos</span>
+          <span><b>15</b> camadas vetoriais</span>
+        </div>
+      </section>
+
+      <section class="panel-section">
+        <div class="section-head"><h2>Mapa-base</h2></div>
+        <select id="basemapSelect" class="select"><option value="positron">Claro — Positron</option><option value="liberty">Cartográfico — Liberty</option><option value="dark">Escuro — Dark</option></select>
+      </section>
+
+      <section class="panel-section">
+        <div class="section-head"><h2>Limites e divisões</h2></div>
+        <label class="layer-item"><input data-layer="bacia" type="checkbox" checked><span><b>Limite da bacia</b><small>Referência espacial do Atlas</small></span></label>
+        <label class="layer-item"><input data-layer="municipios" type="checkbox" checked><span><b>Municípios</b><small>94 recortes municipais na bacia</small></span></label>
+        <label class="layer-item"><input data-layer="sedes" type="checkbox" checked><span><b>Sedes municipais</b><small>67 sedes localizadas na bacia</small></span></label>
+      </section>
+
+      <section class="panel-section">
+        <div class="section-head"><h2>Recursos hídricos</h2></div>
+        <label class="layer-item"><input data-layer="rios_principais" type="checkbox" checked><span><b>Rios principais</b><small>Mearim, Grajaú e Pindaré</small></span></label>
+        <label class="layer-item"><input data-layer="hidrografia" type="checkbox"><span><b>Rede hidrográfica</b><small>14.899 trechos • carregamento sob demanda</small></span></label>
+      </section>
+
+      <section class="panel-section">
+        <div class="section-head"><h2>Meio físico</h2></div>
+        <label class="layer-item"><input data-layer="geologia" type="checkbox"><span><b>Geologia</b><small>15 unidades</small></span></label>
+        <label class="layer-item"><input data-layer="relevo" type="checkbox"><span><b>Relevo</b><small>12 classes</small></span></label>
+        <label class="layer-item"><input data-layer="hipsometria" type="checkbox"><span><b>Hipsometria</b><small>5 classes altimétricas</small></span></label>
+        <label class="layer-item"><input data-layer="solos" type="checkbox"><span><b>Solos</b><small>20 ordens/classes principais</small></span></label>
+        <label class="layer-item"><input data-layer="geodiversidade" type="checkbox"><span><b>Geodiversidade</b><small>743 feições • carregamento sob demanda</small></span></label>
+      </section>
+
+      <section class="panel-section">
+        <div class="section-head"><h2>Proteção territorial</h2></div>
+        <label class="layer-item"><input data-layer="terras_indigenas" type="checkbox"><span><b>Terras Indígenas</b><small>16 áreas na base da bacia</small></span></label>
+        <label class="layer-item"><input data-layer="ucs" type="checkbox"><span><b>Unidades de Conservação</b><small>4 UCs com interseção na bacia</small></span></label>
+      </section>
+
+      <section class="panel-section">
+        <div class="section-head"><h2>Uso e planejamento</h2></div>
+        <label class="layer-item"><input data-layer="aptidao" type="checkbox"><span><b>Aptidão agrícola</b><small>5 classes presentes</small></span></label>
+      </section>
+
+      <section class="panel-section">
+        <div class="section-head"><h2>Transparência temática</h2></div>
+        <input id="thematicOpacity" type="range" min="25" max="85" value="62" step="1" style="width:100%">
+        <small class="muted">Ajusta a opacidade das camadas poligonais temáticas ativas.</small>
+      </section>
+
+      <section class="panel-section orbital-card compact">
+        <div class="orbital-icon">◉</div><div><span class="eyebrow">SÉRIES TEMPORAIS</span><h2>Dados orbitais</h2><p>Estrutura preparada para Uso e Cobertura da Terra e Dinâmica da Água no Google Earth Engine.</p><button id="openOrbitalBtn" class="primary-btn full" type="button">Preparar módulo orbital</button></div>
+      </section>
+
+      <section class="panel-section"><div class="section-head"><h2>Buscar município</h2></div><div class="search-row"><select id="municipioSelect" class="select"><option value="">Selecione...</option></select><button id="zoomMunicipioBtn" type="button" class="primary-btn">Ir</button></div></section>
+      <section id="legendPanel" class="panel-section legend-panel hidden"><div class="section-head"><h2>Legenda</h2></div><div id="legendContent"></div></section>
+      <section class="notice"><strong>Desempenho</strong><p>As camadas mais pesadas são carregadas somente quando ativadas. Os vetores foram convertidos para WGS84 e generalizados para visualização web.</p></section>
+    </div>
+  </aside>
+  <main id="map" aria-label="Mapa interativo da Bacia Hidrográfica do Rio Mearim"></main>
+  <div id="mapError" class="map-error hidden" role="alert"><strong>Não foi possível iniciar o mapa.</strong><span id="mapErrorText">Verifique a conexão e recarregue a página.</span></div>
+  <div id="loading" class="loading hidden" role="status">Carregando camada…</div>
+  <div class="source-badge">Base: OpenFreeMap / OpenStreetMap • Dados: base vetorial do estudo</div>
+</section>
+
+<section id="viewDadosOrbitais" class="app-view page-view" data-view-panel="dados-orbitais">
+  <div class="page-container orbital-page">
+    <div class="page-heading"><div><span class="eyebrow">GOOGLE EARTH ENGINE</span><h2>Dados Orbitais e Séries Temporais</h2><p>O módulo da Bacia do Mearim será construído a partir da mesma arquitetura testada no Pindaré, com Uso e Cobertura da Terra e Dinâmica da Água.</p></div></div>
+    <div class="feature-grid">
+      <article class="feature-card"><span class="feature-icon">▦</span><div><strong>Uso e Cobertura</strong><small>MapBiomas • 1985–2024 • comparação temporal e transições</small></div></article>
+      <article class="feature-card"><span class="feature-icon">≈</span><div><strong>Dinâmica da Água</strong><small>Superfície anual, comparação entre anos e frequência da água</small></div></article>
+      <article class="feature-card"><span class="feature-icon">↔</span><div><strong>Comparação espacial</strong><small>Swipe e lado a lado</small></div></article>
+    </div>
+    <section class="notice" style="margin-top:18px"><strong>Próxima etapa</strong><p>Envie o limite da Bacia do Mearim ao Earth Engine como <code>projects/deaimesc/assets/bacia_mearim</code> e publique o script incluído na pasta <code>gee/</code>. Depois substituiremos este aviso pelo App incorporado.</p></section>
+  </div>
+</section>
+
+<section id="viewSobre" class="app-view page-view" data-view-panel="sobre">
+  <div class="page-container about-page">
+    <div class="page-heading narrow"><div><span class="eyebrow">ATLAS DIGITAL</span><h2>Sobre a Bacia do Rio Mearim</h2><p>Esta versão inicial organiza a base vetorial fornecida para experimentação dos módulos temáticos e preparação das séries orbitais.</p></div></div>
+    <div class="metric-grid"><article class="metric-card"><span>Área da bacia</span><strong>100.204,0 km²</strong><small>Valor informado na base</small></article><article class="metric-card"><span>Municípios</span><strong>94</strong><small>Feições municipais recortadas</small></article><article class="metric-card"><span>Sedes</span><strong>67</strong><small>Pontos de sedes municipais</small></article><article class="metric-card"><span>Hidrografia</span><strong>14.899</strong><small>Trechos vetoriais</small></article></div>
+    <div class="about-grid"><article><h3>Meio físico</h3><p>Geologia, relevo, hipsometria, solos e geodiversidade.</p></article><article><h3>Território</h3><p>Municípios, sedes, Terras Indígenas e Unidades de Conservação.</p></article><article><h3>Planejamento</h3><p>Aptidão agrícola e integração posterior com séries orbitais.</p></article></div>
+    <p class="source-note">Base original em SIRGAS 2000 / UTM zona 23S (EPSG:31983). Os arquivos publicados no site foram reprojetados para WGS84 (EPSG:4326) e generalizados para navegação web.</p>
+  </div>
+</section>
+<script src="js/app.js?v=1"></script>
+<script src="js/maplibre-loader.js?v=1"></script>
+</body></html>
