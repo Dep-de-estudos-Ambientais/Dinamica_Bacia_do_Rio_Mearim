@@ -1,7 +1,60 @@
+// Mapas-base rasterizados. Essa estratégia evita dependência de glyphs/fontes
+// dos estilos vetoriais e elimina avisos 404 de fontes no console.
 const BASEMAPS = {
-  positron: 'https://tiles.openfreemap.org/styles/positron',
-  liberty: 'https://tiles.openfreemap.org/styles/liberty',
-  dark: 'https://tiles.openfreemap.org/styles/dark'
+  positron: {
+    version: 8,
+    sources: {
+      cartoLight: {
+        type: 'raster',
+        tiles: [
+          'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+          'https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+          'https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+          'https://d.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'
+        ],
+        tileSize: 256,
+        attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+      }
+    },
+    layers: [
+      {id: 'carto-light', type: 'raster', source: 'cartoLight'}
+    ]
+  },
+
+  liberty: {
+    version: 8,
+    sources: {
+      osm: {
+        type: 'raster',
+        tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+        tileSize: 256,
+        attribution: '&copy; OpenStreetMap contributors'
+      }
+    },
+    layers: [
+      {id: 'osm-standard', type: 'raster', source: 'osm'}
+    ]
+  },
+
+  dark: {
+    version: 8,
+    sources: {
+      cartoDark: {
+        type: 'raster',
+        tiles: [
+          'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+          'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+          'https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+          'https://d.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
+        ],
+        tileSize: 256,
+        attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+      }
+    },
+    layers: [
+      {id: 'carto-dark', type: 'raster', source: 'cartoDark'}
+    ]
+  }
 };
 
 // Paleta de contingência para qualquer categoria sem cor explícita.
