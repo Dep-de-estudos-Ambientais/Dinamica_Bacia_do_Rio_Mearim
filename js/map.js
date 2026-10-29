@@ -111,6 +111,9 @@ const layerState = {
 const cache = new Map();
 const categoryColors = {};
 const handlersBound = new Set();
+const popupHandlers = new Map();
+let activePopup = null;
+function newSinglePopup(){ if(activePopup) activePopup.remove(); activePopup = new maplibregl.Popup({closeOnClick:true, maxWidth:'360px', offset:12}); return activePopup; }
 let baciaBounds = null;
 let thematicOpacity = 0.62;
 
@@ -132,19 +135,74 @@ function setLoading(v, label='Carregando camada…') { loading.textContent=label
 async function getData(key,url){
   if(cache.has(key)) return cache.get(key);
   setLoading(true,'Carregando '+key.replaceAll('_',' ')+'…');
-  const r=await fetch(url); if(!r.ok) throw new Error(`Falha ao carregar ${url} (${r.status})`);
-  const d=await r.json(); cache.set(key,d); setLoading(false); return d;
+  const r=await fetch(url); if(!r.ok) {setLoading(false);throw new Error(`Falha ao carregar ${url} (${r.status}). Confira nome, maiúsculas/minúsculas e pasta data/ no GitHub.`);}
+  const d=await r.json();
+  // GeoJSON web deve usar longitude/latitude. Não reprojetar UTM por engano.
+  const f=d.features?.find(f=>f.geometry?.coordinates);
+  if(f){let c=f.geometry.coordinates;while(Array.isArray(c)&&Array.isArray(c[0]))c=c[0];
+    if(Array.isArray(c)&& (Math.abs(c[0])>180||Math.abs(c[1])>90))
+      {setLoading(false);throw new Error(url+' contém coordenadas projetadas (provavelmente UTM). Converta para EPSG:4326 antes de publicar.');}
+  }
+  cache.set(key,d); setLoading(false); return d;
 }
 function boundsFromGeoJSON(gj){ const b=new maplibregl.LngLatBounds(); const walk=c=>{if(typeof c?.[0]==='number'){b.extend(c);return;}c?.forEach(walk);}; gj.features.forEach(f=>f.geometry?.coordinates&&walk(f.geometry.coordinates)); return b; }
 function colorFor(value,index){ return palette[index % palette.length]; }
 function uniqueValues(gj,field){ return [...new Set(gj.features.map(f=>f.properties?.[field]).filter(v=>v!==null&&v!==undefined&&v!==''))].sort((a,b)=>String(a).localeCompare(String(b),'pt-BR')); }
-function colorExpression(field,values,colorMap={}){ const expr=['match',['get',field]]; values.forEach((v,i)=>expr.push(v,colorMap[v]||colorFor(v,i))); expr.push('#b8c2bb'); return expr; }
-function safe(v){ return (v===null||v===undefined||v==='')?'—':String(v); }
+function colorExpression(field,values,colorMap={}){
+  // MapLibre 'match' exige ao menos uma categoria (4 argumentos).
+  if (!values.length) return '#b8c2bb';
+  const expr=['match',['to-string',['coalesce',['get',field],'']]];
+  values.forEach((v,i)=>expr.push(String(v),colorMap[v]||colorFor(v,i)));
+  expr.push('#b8c2bb'); return expr;
+}
+function normalizeThematicData(key,gj){
+  const fields={
+    geologia:{unidade:['NOME_UNIDA']},
+    relevo:{classe:['RELEVO']},
+    hipsometria:{classe:['Classes','CLASSES'],area_km2:['Área','AREA']},
+    solos:{ordem:['SOLOS___OR','SOLOS_OR'],legenda:['LEGENDA']},
+    geodiversidade:{cod_unigeo:['COD_UNIGEO'],sigla:['SIGLA_UNID'],unidade:['NOME_UNIDA'],dominio:['DOMINIO'],unigeo:['UNIGEO'],relevo:['RELEVO']},
+    aptidao:{classe:['APTIDAO','APTIDÃO'],area_km2:['Área','AREA']}
+  }[key];
+  if (!fields || !Array.isArray(gj.features)) return gj;
+  for (const f of gj.features){
+    const p=f.properties||{};
+    const lookup=Object.fromEntries(Object.keys(p).map(k=>[k.toLowerCase(),k]));
+    for(const [dest,aliases] of Object.entries(fields)){
+      if(p[dest]!==undefined && p[dest]!==null)continue;
+      for(const alias of [dest,...aliases]){
+        const found=lookup[alias.toLowerCase()];
+        if(found!==undefined && p[found]!==undefined){p[dest]=p[found];break;}
+      }
+    }
+    f.properties=p;
+  }
+  return gj;
+}
+
+function safe(v){ const value=(v===null||v===undefined||v==='')?'—':String(v);return value.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fmt(v,d=1){ const n=Number(v); return Number.isFinite(n)?n.toLocaleString('pt-BR',{minimumFractionDigits:d,maximumFractionDigits:d}):'—'; }
 function popupHtml(title,rows){ return `<h3 class="popup-title">${safe(title)}</h3><div class="popup-table">${rows.map(([a,b])=>`<span>${a}</span><strong>${safe(b)}</strong>`).join('')}</div>`; }
 function firstProperty(p,names){ for(const n of names){ if(p[n]!==undefined&&p[n]!==null&&p[n]!=='') return p[n]; } return null; }
 function genericRows(p,max=5){ const skip=/^(objectid|fid|id|shape|shape_leng|shape_area)$/i; return Object.entries(p||{}).filter(([k,v])=>!skip.test(k)&&v!==null&&v!==undefined&&v!=='').slice(0,max).map(([k,v])=>[k.replaceAll('_',' '),v]); }
-function bindClickOnce(layerId,handler){ const key='click:'+layerId;if(handlersBound.has(key))return;map.on('click',layerId,handler);handlersBound.add(key); }
+function bindClickOnce(layerId,handler){ popupHandlers.set(layerId,handler); }
+// Um único clique gera um único popup. Priorizamos o tema selecionado,
+// pois os polígonos transparentes de Bacia/Municípios ficam acima dele.
+map.on('click', e=>{
+  const visible=[...popupHandlers.keys()].filter(id=>map.getLayer(id)&&map.getLayoutProperty(id,'visibility')!=='none');
+  if(!visible.length)return;
+  const features=map.queryRenderedFeatures(e.point,{layers:visible});
+  const priority=(id)=>{
+    if(id==='sedes-circle')return 0;
+    if(id.startsWith('municipios'))return e.originalEvent?.shiftKey?1:80;
+    if(id.startsWith('bacia'))return e.originalEvent?.shiftKey?2:90;
+    return 10;
+  };
+  features.sort((a,b)=>priority(a.layer.id)-priority(b.layer.id));
+  const chosen=features[0];
+  if(chosen)popupHandlers.get(chosen.layer.id)?.({...e,features:[chosen]});
+  else if(activePopup){activePopup.remove();activePopup=null;}
+});
 function bindPointerOnce(layerId){ const key='pointer:'+layerId;if(handlersBound.has(key))return;map.on('mouseenter',layerId,()=>map.getCanvas().style.cursor='pointer');map.on('mouseleave',layerId,()=>map.getCanvas().style.cursor='');handlersBound.add(key); }
 
 // Mantém Limite da bacia, Municípios e Sedes acima de toda camada temática.
@@ -158,40 +216,43 @@ async function addBacia(){
   if(!map.getSource('bacia')) map.addSource('bacia',{type:'geojson',data:gj});
   map.addLayer({id:'bacia-fill',type:'fill',source:'bacia',paint:{'fill-color':'#2d7a53','fill-opacity':0.012}});
   map.addLayer({id:'bacia-line',type:'line',source:'bacia',paint:{'line-color':'#14532d','line-width':['interpolate',['linear'],['zoom'],5,2.7,10,4.5]}});
-  bindClickOnce('bacia-fill',e=>{const p=e.features?.[0]?.properties||{};new maplibregl.Popup().setLngLat(e.lngLat).setHTML(popupHtml(p.nome||p.bacia||'Bacia do Rio Mearim',[['Área',fmt(p.area_km2,2)+' km²']])).addTo(map);});
+  bindClickOnce('bacia-fill',e=>{const p=e.features?.[0]?.properties||{};newSinglePopup().setLngLat(e.lngLat).setHTML(popupHtml(p.nome||p.bacia||'Bacia do Rio Mearim',[['Área',fmt(p.area_km2,2)+' km²']])).addTo(map);});
 }
 async function addMunicipios(){
   const gj=await getData('municipios','data/municipios_bacia.geojson'); if(!map.getSource('municipios')) map.addSource('municipios',{type:'geojson',data:gj});
   map.addLayer({id:'municipios-fill',type:'fill',source:'municipios',paint:{'fill-color':'#718078','fill-opacity':0.012}});
   map.addLayer({id:'municipios-line',type:'line',source:'municipios',paint:{'line-color':'#394a42','line-width':['interpolate',['linear'],['zoom'],5,.8,10,1.4],'line-opacity':0.95}});
-  bindClickOnce('municipios-fill',e=>{const p=e.features?.[0]?.properties||{};new maplibregl.Popup().setLngLat(e.lngLat).setHTML(popupHtml(p.nome,[['Código IBGE',p.codigo],['Área municipal',fmt(p.area_km2,1)+' km²'],['Bioma',p.bioma],['Pop. 2022',p.pop_2022?Number(p.pop_2022).toLocaleString('pt-BR'):'—'],['Pop. 2025',p.pop_2025?Number(p.pop_2025).toLocaleString('pt-BR'):'—']])).addTo(map);});
+  bindClickOnce('municipios-fill',e=>{const p=e.features?.[0]?.properties||{};newSinglePopup().setLngLat(e.lngLat).setHTML(popupHtml(p.nome,[['Código IBGE',p.codigo],['Área municipal',fmt(p.area_km2,1)+' km²'],['Bioma',p.bioma],['Pop. 2022',p.pop_2022?Number(p.pop_2022).toLocaleString('pt-BR'):'—'],['Pop. 2025',p.pop_2025?Number(p.pop_2025).toLocaleString('pt-BR'):'—']])).addTo(map);});
   bindPointerOnce('municipios-fill'); fillMunicipioSelect(gj);
 }
 async function addSedes(){
   const gj=await getData('sedes','data/sedes_municipais.geojson'); if(!map.getSource('sedes')) map.addSource('sedes',{type:'geojson',data:gj});
   map.addLayer({id:'sedes-circle',type:'circle',source:'sedes',paint:{'circle-radius':['interpolate',['linear'],['zoom'],5,3.2,9,6.2],'circle-color':'#173126','circle-stroke-color':'#fff','circle-stroke-width':1.5}});
   map.addLayer({id:'sedes-label',type:'symbol',source:'sedes',minzoom:7,layout:{'text-field':['get','nome'],'text-size':10,'text-offset':[0,1.2],'text-anchor':'top'},paint:{'text-color':'#173126','text-halo-color':'#fff','text-halo-width':1.4}});
-  bindClickOnce('sedes-circle',e=>{const p=e.features?.[0]?.properties||{};new maplibregl.Popup().setLngLat(e.lngLat).setHTML(popupHtml(p.nome,[['Código IBGE',p.codigo],['UF',String(p.uf||'').toUpperCase()]])).addTo(map);}); bindPointerOnce('sedes-circle');
+  bindClickOnce('sedes-circle',e=>{const p=e.features?.[0]?.properties||{};newSinglePopup().setLngLat(e.lngLat).setHTML(popupHtml(p.nome,[['Código IBGE',p.codigo],['UF',String(p.uf||'').toUpperCase()]])).addTo(map);}); bindPointerOnce('sedes-circle');
 }
 async function addRiosPrincipais(){
   const defs=[['rio_mearim','data/rio_mearim.geojson','#1d4ed8','Rio Mearim'],['rio_grajau','data/rio_grajau.geojson','#0ea5e9','Rio Grajaú'],['rio_pindare','data/rio_pindare.geojson','#06b6d4','Rio Pindaré']];
-  for(const [key,url,color,label] of defs){ const gj=await getData(key,url);if(!map.getSource(key))map.addSource(key,{type:'geojson',data:gj});map.addLayer({id:key+'-line',type:'line',source:key,paint:{'line-color':color,'line-width':['interpolate',['linear'],['zoom'],5,1.6,9,3.1,13,5],'line-opacity':0.95}});map.addLayer({id:key+'-label',type:'symbol',source:key,minzoom:6.5,layout:{'symbol-placement':'line','text-field':label,'text-size':11,'text-allow-overlap':false},paint:{'text-color':color,'text-halo-color':'#fff','text-halo-width':1.3}});bindClickOnce(key+'-line',e=>new maplibregl.Popup().setLngLat(e.lngLat).setHTML(popupHtml(label,[['Curso principal',label]])).addTo(map));bindPointerOnce(key+'-line'); }
+  for(const [key,url,color,label] of defs){ const gj=await getData(key,url);if(!map.getSource(key))map.addSource(key,{type:'geojson',data:gj});map.addLayer({id:key+'-line',type:'line',source:key,paint:{'line-color':color,'line-width':['interpolate',['linear'],['zoom'],5,1.6,9,3.1,13,5],'line-opacity':0.95}});map.addLayer({id:key+'-label',type:'symbol',source:key,minzoom:6.5,layout:{'symbol-placement':'line','text-field':label,'text-size':11,'text-allow-overlap':false},paint:{'text-color':color,'text-halo-color':'#fff','text-halo-width':1.3}});bindClickOnce(key+'-line',e=>newSinglePopup().setLngLat(e.lngLat).setHTML(popupHtml(label,[['Curso principal',label]])).addTo(map));bindPointerOnce(key+'-line'); }
 }
 async function addMassasAgua(){
   const gj=await getData('massas_agua','data/Lagos_Mearim.geojson'); if(!map.getSource('massas_agua')) map.addSource('massas_agua',{type:'geojson',data:gj});
   map.addLayer({id:'massas_agua-fill',type:'fill',source:'massas_agua',paint:{'fill-color':'#2f9ed6','fill-opacity':Math.min(.78,Math.max(.40,thematicOpacity+.08))}});
   map.addLayer({id:'massas_agua-line',type:'line',source:'massas_agua',paint:{'line-color':'#126b9b','line-width':1.05,'line-opacity':.95}});
-  bindClickOnce('massas_agua-fill',e=>{const p=e.features?.[0]?.properties||{};const nome=firstProperty(p,['nome','NOME','Nome','name','DENOMINACAO','denominacao'])||'Massa de água';const rows=genericRows(p,6);new maplibregl.Popup().setLngLat(e.lngLat).setHTML(popupHtml(nome,rows.length?rows:[['Camada','Massa de água']])).addTo(map);}); bindPointerOnce('massas_agua-fill');
+  bindClickOnce('massas_agua-fill',e=>{const p=e.features?.[0]?.properties||{};const nome=firstProperty(p,['nome','NOME','Nome','name','DENOMINACAO','denominacao'])||'Massa de água';const rows=genericRows(p,6);newSinglePopup().setLngLat(e.lngLat).setHTML(popupHtml(nome,rows.length?rows:[['Camada','Massa de água']])).addTo(map);}); bindPointerOnce('massas_agua-fill');
 }
 async function addHidrografia(){
-  const gj=await getData('hidrografia','data/hidrografia.geojson');if(!map.getSource('hidrografia'))map.addSource('hidrografia',{type:'geojson',data:gj});map.addLayer({id:'hidrografia-line',type:'line',source:'hidrografia',paint:{'line-color':'#2f7da0','line-width':['interpolate',['linear'],['zoom'],5,.35,9,1,13,1.8],'line-opacity':0.72}});map.addLayer({id:'hidrografia-label',type:'symbol',source:'hidrografia',minzoom:10,layout:{'symbol-placement':'line','text-field':['coalesce',['get','nome'],''],'text-size':9,'text-allow-overlap':false},paint:{'text-color':'#235d78','text-halo-color':'#fff','text-halo-width':1.1}});bindClickOnce('hidrografia-line',e=>{const p=e.features?.[0]?.properties||{};new maplibregl.Popup().setLngLat(e.lngLat).setHTML(popupHtml('Hidrografia',[['Nome',p.nome],['Comprimento informado',p.comprimento_m?fmt(p.comprimento_m,0)+' m':'—']])).addTo(map);});bindPointerOnce('hidrografia-line');
+  const gj=await getData('hidrografia','data/hidrografia.geojson');if(!map.getSource('hidrografia'))map.addSource('hidrografia',{type:'geojson',data:gj});map.addLayer({id:'hidrografia-line',type:'line',source:'hidrografia',paint:{'line-color':'#2f7da0','line-width':['interpolate',['linear'],['zoom'],5,.35,9,1,13,1.8],'line-opacity':0.72}});map.addLayer({id:'hidrografia-label',type:'symbol',source:'hidrografia',minzoom:10,layout:{'symbol-placement':'line','text-field':['coalesce',['get','nome'],''],'text-size':9,'text-allow-overlap':false},paint:{'text-color':'#235d78','text-halo-color':'#fff','text-halo-width':1.1}});bindClickOnce('hidrografia-line',e=>{const p=e.features?.[0]?.properties||{};newSinglePopup().setLngLat(e.lngLat).setHTML(popupHtml('Hidrografia',[['Nome',p.nome],['Comprimento informado',p.comprimento_m?fmt(p.comprimento_m,0)+' m':'—']])).addTo(map);});bindPointerOnce('hidrografia-line');
 }
 async function addCategoricalPolygon({key,url,field,title,popupRows,colorMap={},lineColor='rgba(55,44,32,.48)'}){
-  const gj=await getData(key,url); const vals=uniqueValues(gj,field); categoryColors[key]={values:vals,title,colorMap};
+  const gj=normalizeThematicData(key,await getData(key,url));
+  const vals=uniqueValues(gj,field);
+  if(!vals.length)console.warn('[Atlas Mearim] Nenhuma classe identificada em',key,'campo',field,'atributos:',Object.keys(gj.features?.[0]?.properties||{}));
+  categoryColors[key]={values:vals,title,colorMap};
   if(!map.getSource(key))map.addSource(key,{type:'geojson',data:gj});
   map.addLayer({id:key+'-fill',type:'fill',source:key,paint:{'fill-color':colorExpression(field,vals,colorMap),'fill-opacity':thematicOpacity}});
   map.addLayer({id:key+'-line',type:'line',source:key,paint:{'line-color':lineColor,'line-width':.55}});
-  bindClickOnce(key+'-fill',e=>{const p=e.features?.[0]?.properties||{};new maplibregl.Popup().setLngLat(e.lngLat).setHTML(popupHtml(title,popupRows(p))).addTo(map);});bindPointerOnce(key+'-fill');
+  bindClickOnce(key+'-fill',e=>{const p=e.features?.[0]?.properties||{};newSinglePopup().setLngLat(e.lngLat).setHTML(popupHtml(title,popupRows(p))).addTo(map);});bindPointerOnce(key+'-fill');
 }
 const addGeologia=()=>addCategoricalPolygon({key:'geologia',url:'data/geologia.geojson',field:'unidade',title:'Geologia',colorMap:LYR_COLORS.geologia,popupRows:p=>[['Unidade',p.unidade]]});
 const addRelevo=()=>addCategoricalPolygon({key:'relevo',url:'data/relevo.geojson',field:'classe',title:'Relevo',colorMap:LYR_COLORS.relevo,popupRows:p=>[['Classe',p.classe]]});
@@ -199,8 +260,8 @@ const addHipsometria=()=>addCategoricalPolygon({key:'hipsometria',url:'data/hips
 const addSolos=()=>addCategoricalPolygon({key:'solos',url:'data/solos.geojson',field:'ordem',title:'Solos',colorMap:LYR_COLORS.solos,popupRows:p=>[['Ordem',p.ordem],['Legenda detalhada',p.legenda]]});
 const addGeodiversidade=()=>addCategoricalPolygon({key:'geodiversidade',url:'data/geodiversidade.geojson',field:'cod_unigeo',title:'Geodiversidade',colorMap:LYR_COLORS.geodiversidade,popupRows:p=>[['Código da unidade',p.cod_unigeo],['Unidade geológica',p.unidade],['Sigla',p.sigla],['Unidade geodiversidade',p.unigeo],['Domínio',p.dominio],['Relevo',p.relevo]]});
 const addAptidao=()=>addCategoricalPolygon({key:'aptidao',url:'data/aptidao_agricola.geojson',field:'classe',title:'Aptidão agrícola',colorMap:LYR_COLORS.aptidao,popupRows:p=>[['Classe',p.classe],['Área informada',p.area_km2?fmt(p.area_km2,1)+' km²':'—']]});
-async function addTerrasIndigenas(){const gj=await getData('terras_indigenas','data/terras_indigenas.geojson');if(!map.getSource('terras_indigenas'))map.addSource('terras_indigenas',{type:'geojson',data:gj});map.addLayer({id:'terras_indigenas-fill',type:'fill',source:'terras_indigenas',paint:{'fill-color':'#c2410c','fill-opacity':Math.min(thematicOpacity,.52)}});map.addLayer({id:'terras_indigenas-line',type:'line',source:'terras_indigenas',paint:{'line-color':'#9a3412','line-width':1.2}});bindClickOnce('terras_indigenas-fill',e=>{const p=e.features?.[0]?.properties||{};new maplibregl.Popup().setLngLat(e.lngLat).setHTML(popupHtml(p.nome||'Terra Indígena',[['Fase',p.fase],['Superfície informada',p.superficie_ha?fmt(p.superficie_ha,0)+' ha':'—']])).addTo(map);});bindPointerOnce('terras_indigenas-fill');}
-async function addUcs(){const gj=await getData('ucs','data/unidades_conservacao.geojson');if(!map.getSource('ucs'))map.addSource('ucs',{type:'geojson',data:gj});map.addLayer({id:'ucs-fill',type:'fill',source:'ucs',paint:{'fill-color':'#15803d','fill-opacity':Math.min(thematicOpacity,.46)}});map.addLayer({id:'ucs-line',type:'line',source:'ucs',paint:{'line-color':'#166534','line-width':1.25}});bindClickOnce('ucs-fill',e=>{const p=e.features?.[0]?.properties||{};const nome=p.nome_estadual||p.nome_federal||'Unidade de Conservação';new maplibregl.Popup().setLngLat(e.lngLat).setHTML(popupHtml(nome,[['Categoria',p.categoria],['Grupo',p.grupo],['Esfera',p.esfera],['Ano de criação',p.ano_criacao]])).addTo(map);});bindPointerOnce('ucs-fill');}
+async function addTerrasIndigenas(){const gj=await getData('terras_indigenas','data/terras_indigenas.geojson');if(!map.getSource('terras_indigenas'))map.addSource('terras_indigenas',{type:'geojson',data:gj});map.addLayer({id:'terras_indigenas-fill',type:'fill',source:'terras_indigenas',paint:{'fill-color':'#c2410c','fill-opacity':Math.min(thematicOpacity,.52)}});map.addLayer({id:'terras_indigenas-line',type:'line',source:'terras_indigenas',paint:{'line-color':'#9a3412','line-width':1.2}});bindClickOnce('terras_indigenas-fill',e=>{const p=e.features?.[0]?.properties||{};newSinglePopup().setLngLat(e.lngLat).setHTML(popupHtml(p.nome||'Terra Indígena',[['Fase',p.fase],['Superfície informada',p.superficie_ha?fmt(p.superficie_ha,0)+' ha':'—']])).addTo(map);});bindPointerOnce('terras_indigenas-fill');}
+async function addUcs(){const gj=await getData('ucs','data/unidades_conservacao.geojson');if(!map.getSource('ucs'))map.addSource('ucs',{type:'geojson',data:gj});map.addLayer({id:'ucs-fill',type:'fill',source:'ucs',paint:{'fill-color':'#15803d','fill-opacity':Math.min(thematicOpacity,.46)}});map.addLayer({id:'ucs-line',type:'line',source:'ucs',paint:{'line-color':'#166534','line-width':1.25}});bindClickOnce('ucs-fill',e=>{const p=e.features?.[0]?.properties||{};const nome=p.nome_estadual||p.nome_federal||'Unidade de Conservação';newSinglePopup().setLngLat(e.lngLat).setHTML(popupHtml(nome,[['Categoria',p.categoria],['Grupo',p.grupo],['Esfera',p.esfera],['Ano de criação',p.ano_criacao]])).addTo(map);});bindPointerOnce('ucs-fill');}
 
 const adders={bacia:addBacia,municipios:addMunicipios,sedes:addSedes,rios_principais:addRiosPrincipais,massas_agua:addMassasAgua,hidrografia:addHidrografia,geologia:addGeologia,relevo:addRelevo,hipsometria:addHipsometria,solos:addSolos,geodiversidade:addGeodiversidade,terras_indigenas:addTerrasIndigenas,ucs:addUcs,aptidao:addAptidao};
 const ids={
