@@ -63,7 +63,7 @@
 
     const script = document.createElement('script');
     script.id = 'atlasMapScript';
-    script.src = 'js/map.js?v=7';
+    script.src = 'js/map.js?v=8';
     script.defer = true;
 
     script.onload = () => {
